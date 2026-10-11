@@ -182,4 +182,4 @@ jobs:
             installers/*.exe
             installers/*.zip
           generate_release_notes: true
-          delete_assets: "replace"
+          delete_assets: "all"

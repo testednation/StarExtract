@@ -6,7 +6,7 @@ picked automatically, identify any file's true format from its binary
 signature, keep codec and unpacker plugins up to date from editable URLs, and
 never get stuck on a password again.
 
-![version](https://img.shields.io/badge/version-1.5.0-blue)
+![version](https://img.shields.io/badge/version-1.6.0-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![framework](https://img.shields.io/badge/.NET%20Framework-4.8-purple)
 ![arch](https://img.shields.io/badge/arch-x64%20%7C%20x86-success)
@@ -74,7 +74,11 @@ Integrate into Windows Explorer right-click menus on every file and folder:
 
 - **Open**, **Extract files…**, **Extract Here**, **Extract to <Folder>\**,
   **Test archive**, **Add to archive…**
-- One-click compression: **Add to <name>.7z** and **Add to <name>.zip**
+- One-click compression per file: **Add each file to separate .7z** and
+  **Add each file to separate .zip**
+- Multi-select combine: **Combine all selected into one .7z** and
+  **Combine all selected into one .zip** (single `Combined.7z`/`.zip`)
+- **Extract MSI with LessMSI** on `.msi`/`.msp` files (forced LessMSI engine)
 - **CRC SHA** submenu — CRC-32 / CRC-64 / SHA-1 / SHA-256 / all hashes
 - **Scan file type (TrID)** — signature analysis from the menu
 - Flat menu or cascaded under **Star Extract ▸**; optional icons; per-item
@@ -207,7 +211,7 @@ cheat sheet.
 ## 🚀 Getting Started
 
 ### Option 1 — Installer (recommended)
-1. Download `StarExtract-1.5.0-setup-x64.exe` (or `-x86` for 32-bit Windows)
+1. Download `StarExtract-1.6.0-setup-x64.exe` (or `-x86` for 32-bit Windows)
    and run it
 2. Pick **for all users** or **just for me** on the first setup page
 3. Launch, open the **Components** tab, and click **Download / Update All** to
@@ -225,13 +229,20 @@ outside `%AppData%\StarExtract` for settings.
 StarExtract.exe <archive>             open in browser
 StarExtract.exe <archive> /extract    quick-extract immediately
 StarExtract.exe <file> /scan          file-type scan (TrID)
-StarExtract.exe <target> /add7z       compress to <target>.7z
-StarExtract.exe <target> /addzip      compress to <target>.zip
+StarExtract.exe <target> /add7z       one .7z per target (separate)
+StarExtract.exe <target> /addzip      one .zip per target (separate)
+StarExtract.exe <f1> <f2>... /combine7z    all inputs into one Combined.7z
+StarExtract.exe <f1> <f2>... /combinezip   all inputs into one Combined.zip
 StarExtract.exe /register             register Explorer context menu
 StarExtract.exe /unregister           remove Explorer context menu
 StarExtract.exe /registercascaded     context menu as sub-menu
 StarExtract.exe /registermain         context menu flat in main menu
 ```
+
+Full version is `VERSION.BUILD_NUMBER` (e.g. `1.6.0.1`): it is stamped into
+`StarExtract.exe`, the setup names, and every ZIP name. `BUILD_NUMBER`
+auto-increments after each local `build-installers` run; CI tags use
+`v<version>.<build>` (or append the run number).
 
 ### Data & settings locations
 | File | Purpose |
@@ -247,18 +258,36 @@ StarExtract.exe /registermain         context menu flat in main menu
 
 ## 📦 Installers
 
-Two official installers ship per release (~120 MB each — they bundle the full
-UniExtract plugin suite so everything works offline):
+Two official installers ship per release plus portable and setup ZIPs — every
+file name carries the full version **including the build number**
+(`StarExtract-1.6.0.1-setup-x64.exe`,
+`StarExtract-1.6.0.1-portable-x64.zip`, ...):
 
-| Installer | For |
+| Artifact | For |
 |---|---|
-| `StarExtract-1.5.0-setup-x64.exe` | 64-bit Windows (recommended) |
-| `StarExtract-1.5.0-setup-x86.exe` | 32-bit Windows (runs on x64 too) |
+| `StarExtract-<ver>-setup-x64.exe` | 64-bit Windows (recommended) |
+| `StarExtract-<ver>-setup-x86.exe` | 32-bit Windows (runs on x64 too) |
+| `StarExtract-<ver>-portable-x64.zip` | 64-bit portable (payload + `bin\` + README) |
+| `StarExtract-<ver>-portable-x86.zip` | 32-bit portable (payload + `bin\` + README) |
+| `StarExtract-<ver>-setup-x64.zip` | Zipped x64 installer |
+| `StarExtract-<ver>-setup-x86.zip` | Zipped x86 installer |
 
 Each carries an **architecture-matched 7-Zip core and codecs** (x64 build →
 64-bit 7z + x64 codecs; x86 build → 32-bit equivalents — verified per binary).
 Both register a proper Add/Remove Programs entry and support silent install
 (`/VERYSILENT /NORESTART`) and silent uninstall.
+
+### Native-only installer
+`build-installers.ps1 -NativeOnly` builds a variant that ships **only the C++
+Win32 edition** (`StarExtractNative.exe` — no .NET build, no .NET runtime
+requirement). Same version stamping and build-number bump; names carry a
+`-native` marker:
+
+| Artifact | For |
+|---|---|
+| `StarExtract-<ver>-native-setup-x64.exe` / `-x86.exe` | Native-only installers |
+| `StarExtract-<ver>-native-portable-x64.zip` / `-x86.zip` | Native portable builds |
+| `StarExtract-<ver>-native-setup-x*.zip` | Zipped native installers |
 
 ### Install modes
 Choose on the first setup page, or force from the command line:
@@ -278,6 +307,7 @@ closed automatically before files are replaced.
 ### Requirements
 - Windows 7 SP1 or newer
 - .NET Framework 4.8 (auto-detected at setup, with a download link if missing)
+- *Native-only installer: no .NET requirement*
 
 ---
 
@@ -296,6 +326,13 @@ Output: `src/bin/<arch>/Release/net48/StarExtract.exe` — run it from a
 folder containing the 7-Zip core (`7z.exe`, `7z.dll`), `Codecs\`, and `bin\`.
 
 ### Installers
+Fast path — everything (build + stage + installers + ZIPs + build-number bump):
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File build-installers.ps1            # .NET + native
+powershell -NoProfile -ExecutionPolicy Bypass -File build-installers.ps1 -NativeOnly  # native only
+```
+
+Manual steps:
 1. Build and stage the payload folders (per-arch app binary, arch-matched
    7-Zip core and codecs — x86 binaries are downloaded from the official
    7-Zip and 7-Zip-zstd releases and PE-verified):
@@ -305,10 +342,10 @@ folder containing the 7-Zip core (`7z.exe`, `7z.dll`), `Codecs\`, and `bin\`.
 2. Compile with [Inno Setup](https://jrsoftware.org/isinfo.php), overriding the
    defaults as needed:
    ```bash
-   ISCC.exe installer/StarExtract-installer.iss /DArch=x64 \
-     /DRepoRoot=. /DPayloadRoot="%TEMP%\e7z-payload" /DAppVersion=1.5.0
-   ISCC.exe installer/StarExtract-installer.iss /DArch=x86 \
-     /DRepoRoot=. /DPayloadRoot="%TEMP%\e7z-payload" /DAppVersion=1.5.0
+    ISCC.exe installer/StarExtract-installer.iss /DArch=x64 \
+      /DRepoRoot=. /DPayloadRoot="%TEMP%\e7z-payload" /DAppVersion=1.6.0.1
+    ISCC.exe installer/StarExtract-installer.iss /DArch=x86 \
+      /DRepoRoot=. /DPayloadRoot="%TEMP%\e7z-payload" /DAppVersion=1.6.0.1
    ```
 Setup binaries land in `<PayloadRoot>\output`. The `.iss` handles mode
 selection, upgrade detection, version metadata, and .NET checks.
@@ -368,6 +405,24 @@ StarExtract/
 ---
 
 ## 📝 Changelog
+
+### 1.6.0
+- **Native C++ Win32 edition** — `StarExtractNative.exe` ships alongside the
+  .NET app in the native installer variants; no .NET runtime required. The
+  native edition is now the recommended artifact (`-native` setup/portable
+  files)
+- **Component manager in the native edition** — 15-entry catalog (7-Zip core,
+  zstd/brotli codecs, UniExtract2 bundle, LessMSI, GARbro, PeaZip, ExeInfoPE,
+  TrID + defs, Magika, innounp/unshield/unrpa/wise/enigma) with live download
+  (WinINet), SHA-256 pinning, 7-Zip-based install, per-component URL override,
+  and custom plugin add/remove
+- **Browser upgrades (native)** — full `7z l -slt` metadata (size/packed/
+  modified/attributes/encrypted), live search, multi-select, real extraction
+  progress with cancel, timestamped log
+- Engine-detection parity: InstallShield `ISc(` magic, Wise/Inno byte markers;
+  password vault with `%APPDATA%` fallback; `ISc(`-checked CAB routing
+- Versioning now stamps `VERSION.BUILD_NUMBER` into the native exe, every
+  installer, and every ZIP
 
 ### 1.5.0
 - **Project renamed to Star Extract** — same engine, new name. The executable is

@@ -4,7 +4,7 @@
 ; Optional overrides (all have local defaults):
 ;   /DRepoRoot="C:\path\to\StarExtract"    repo checkout (src, bin, README.md)
 ;   /DPayloadRoot="C:\temp\installer"    staging + output folder
-;   /DAppVersion="1.5.0"                 version embedded in the setup exe
+;   /DAppVersion="1.6.0"                 version embedded in the setup exe
 ; tools\stage-payload.ps1 prepares the payload folders; CI passes /D overrides
 ; so it never depends on absolute local paths.
 ;
@@ -20,7 +20,12 @@
 
 #define MyAppName "Star Extract"
 #define MyAppPublisher "Star Extract Project"
-#define MyAppExeName "StarExtract.exe"
+#ifdef NativeOnly
+  ; Native-only installer ships the Win32 C++ edition (no .NET dependency)
+  #define MyAppExeName "StarExtractNative.exe"
+#else
+  #define MyAppExeName "StarExtract.exe"
+#endif
 ; Stable upgrade code — never change this between releases.
 #define MyAppId "{7E1A2C64-9B3D-4E7F-9C2A-5F0D8B1A4E6C}"
 
@@ -34,19 +39,29 @@
 #endif
 #define PayloadRootN RemoveBackslashUnlessRoot(PayloadRoot)
 #ifndef AppVersion
-  #define AppVersion "1.5.0"
+  #define AppVersion "1.6.0.1"
 #endif
 #define MyAppVersion AppVersion
+; AppVersion is always the full 4-part version incl. build number
+; (build scripts pass /DAppVersion=<VERSION>.<BUILD_NUMBER>).
 
 #ifndef Arch
   #define Arch "x64"
 #endif
 
 #if Arch == "x64"
-  #define PayloadDir PayloadRootN + "\payload-x64"
+  #ifdef NativeOnly
+    #define PayloadDir PayloadRootN + "\payload-nat-x64"
+  #else
+    #define PayloadDir PayloadRootN + "\payload-x64"
+  #endif
   #define OutSuffix "x64"
 #else
-  #define PayloadDir PayloadRootN + "\payload-x86"
+  #ifdef NativeOnly
+    #define PayloadDir PayloadRootN + "\payload-nat-x86"
+  #else
+    #define PayloadDir PayloadRootN + "\payload-x86"
+  #endif
   #define OutSuffix "x86"
 #endif
 
@@ -60,7 +75,11 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
 UninstallDisplayIcon={app}\{#MyAppExeName}
-SetupIconFile={#RepoRootN}\src\app.ico
+#ifdef NativeOnly
+  SetupIconFile={#RepoRootN}\native\res\app.ico
+#else
+  SetupIconFile={#RepoRootN}\src\app.ico
+#endif
 WizardStyle=modern
 ; Default to per-machine, but let the user (or /CURRENTUSER // /ALLUSERS) override.
 PrivilegesRequired=admin
@@ -81,7 +100,11 @@ VersionInfoProductVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoCopyright=MIT-style license; see bundled licenses
 OutputDir={#PayloadRootN}\output
-OutputBaseFilename=StarExtract-{#MyAppVersion}-setup-{#OutSuffix}
+#ifdef NativeOnly
+  OutputBaseFilename=StarExtract-{#MyAppVersion}-native-setup-{#OutSuffix}
+#else
+  OutputBaseFilename=StarExtract-{#MyAppVersion}-setup-{#OutSuffix}
+#endif
 Compression=lzma2/normal
 SolidCompression=yes
 LZMANumBlockThreads=4
@@ -147,11 +170,14 @@ begin
 end;
 
 function InitializeSetup(): Boolean;
+#ifndef NativeOnly
 var
   netRelease: Cardinal;
+#endif
 begin
   Result := True;
 
+#ifndef NativeOnly
   // .NET Framework 4.8 = Release 528040 (Win10 1903+ ships it built in)
   if not RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full', 'Release', netRelease) then
     netRelease := 0;
@@ -163,6 +189,7 @@ begin
       Exit;
     end;
   end;
+#endif
 
   // Upgrade detection: remember the previous install (any hive/mode) and
   // tell the user what they are upgrading — never touch WizardForm here

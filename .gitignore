@@ -33,6 +33,24 @@ installer/output/
 *.7z
 7z2408-x64.exe
 
+# native C++ edition - commit sources/build scripts/icon, ignore build outputs
+native/*.obj
+native/*.exe
+native/*.manifest
+native/*.res
+native/res/version.rc
+native/res/version.res
+native/*.bak
+native/x86/
+native/7z.exe
+native/7z.dll
+native/compile_test.bat
+native/test_compile.bat
+native/test_link.c
+native/test_minimal.cpp
+native/syntax_check.bat
+native/res/RCa07408
+
 # local workspace metadata
 .freebuff/
 

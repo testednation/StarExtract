@@ -38,6 +38,21 @@ jobs:
           Start-Process -FilePath $exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
           Add-Content $env:GITHUB_PATH "C:\Program Files (x86)\Inno Setup 6"
 
+      - name: Resolve full version (tag + build number)
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v',''
+          if ($tag -match '^\d+\.\d+\.\d+\.\d+$') {
+            $full = $tag
+          } elseif ($tag -match '^\d+\.\d+\.\d+$') {
+            $full = "$tag.${{ github.run_number }}"
+          } else {
+            $full = "$tag.${{ github.run_number }}"
+          }
+          "full=$full" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Full version: $full"
+
       - name: Stage payloads
         shell: pwsh
         run: |
@@ -45,24 +60,47 @@ jobs:
             -Arch ${{ matrix.arch }} `
             -RepoRoot ${{ github.workspace }} `
             -PayloadRoot "$env:RUNNER_TEMP\installer" `
-            -Version ("${{ github.ref_name }}" -replace '^v','')
+            -FullVersion "${{ steps.ver.outputs.full }}"
 
       - name: Compile installer
         shell: pwsh
         run: |
           $arch = "${{ matrix.arch }}"
+          $full = "${{ steps.ver.outputs.full }}"
           & ISCC.exe installer\StarExtract-installer.iss `
             "/DArch=$arch" `
             "/DRepoRoot=${{ github.workspace }}" `
             "/DPayloadRoot=$env:RUNNER_TEMP\installer" `
-            "/DAppVersion=$("${{ github.ref_name }}" -replace '^v','')"
+            "/DAppVersion=$full"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Create portable + setup ZIPs (names carry the full version)
+        # NOTE: 7z.exe (not Compress-Archive) — the plugin tree contains
+        # pre-1980 timestamps that break Compress-Archive on PS 5.1.
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.arch }}"
+          $full = "${{ steps.ver.outputs.full }}"
+          $payload = "$env:RUNNER_TEMP\installer\payload-$arch"
+          $stage = "$env:RUNNER_TEMP\installer\portable-$arch"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item "$payload\*" $stage -Recurse -Force
+          Copy-Item "${{ github.workspace }}\bin" "$stage\bin" -Recurse -Force
+          Copy-Item "${{ github.workspace }}\README.md" "$stage\README.md" -Force
+          & "${{ github.workspace }}\7z.exe" a -tzip "$env:RUNNER_TEMP\installer\output\StarExtract-$full-portable-$arch.zip" "$stage\*" -mx=9
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "${{ github.workspace }}\7z.exe" a -tzip "$env:RUNNER_TEMP\installer\output\StarExtract-$full-setup-$arch.zip" "$env:RUNNER_TEMP\installer\output\StarExtract-$full-setup-$arch.exe" -mx=9
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: StarExtract-setup-${{ matrix.arch }}
-          path: ${{ runner.temp }}/installer/output/StarExtract-*-setup-${{ matrix.arch }}.exe
+          path: |
+            ${{ runner.temp }}/installer/output/StarExtract-*-setup-${{ matrix.arch }}.exe
+            ${{ runner.temp }}/installer/output/StarExtract-*-portable-${{ matrix.arch }}.zip
+            ${{ runner.temp }}/installer/output/StarExtract-*-setup-${{ matrix.arch }}.zip
           if-no-files-found: error
 
   release:
@@ -81,5 +119,7 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
-          files: installers/*.exe
+          files: |
+            installers/*.exe
+            installers/*.zip
           generate_release_notes: true

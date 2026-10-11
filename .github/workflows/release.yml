@@ -1,7 +1,7 @@
 name: Release
 
-# Builds both installer variants on a version tag push (v1.2.3) and attaches
-# them to the GitHub Release for that tag. Manually dispatchable as well.
+# Builds the .NET variant, the native C++ variant, and attaches them to the
+# GitHub Release for a version tag push (v1.2.3). Manually dispatchable too.
 on:
   push:
     tags:
@@ -10,6 +10,11 @@ on:
 
 permissions:
   contents: write
+  releases: write
+
+# Shared snippet: Inno Setup installers moved to GitHub releases; download the
+# portable exe, install silently, and put ISCC.exe on PATH.
+# (Inlined in each job since YAML has no cross-job include for steps.)
 
 jobs:
   build:
@@ -32,7 +37,6 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          # Inno Setup installers moved to GitHub releases; files.jrsoftware.org 404s now.
           $exe = "$env:RUNNER_TEMP\innosetup.exe"
           Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile $exe
           Start-Process -FilePath $exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
@@ -45,8 +49,6 @@ jobs:
           $tag = "${{ github.ref_name }}" -replace '^v',''
           if ($tag -match '^\d+\.\d+\.\d+\.\d+$') {
             $full = $tag
-          } elseif ($tag -match '^\d+\.\d+\.\d+$') {
-            $full = "$tag.${{ github.run_number }}"
           } else {
             $full = "$tag.${{ github.run_number }}"
           }
@@ -103,9 +105,64 @@ jobs:
             ${{ runner.temp }}/installer/output/StarExtract-*-setup-${{ matrix.arch }}.zip
           if-no-files-found: error
 
+  build-native:
+    name: Build native installers
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP\innosetup.exe"
+          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile $exe
+          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          Add-Content $env:GITHUB_PATH "C:\Program Files (x86)\Inno Setup 6"
+
+      - name: Resolve full version (tag + build number)
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v',''
+          if ($tag -match '^\d+\.\d+\.\d+\.\d+$') {
+            $full = $tag
+          } else {
+            $full = "$tag.${{ github.run_number }}"
+          }
+          "full=$full" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Full version: $full"
+
+      - name: Build native edition + installers + ZIPs (x64 + x86)
+        # build-installers.ps1 -NativeOnly builds the C++ edition for both
+        # arches, stages payload-nat-*, compiles the -native installers, and
+        # makes the portable/setup ZIPs. -Version stamps the CI full version;
+        # -NoIncrement keeps the build-number bump out of CI.
+        shell: pwsh
+        run: |
+          & powershell -NoProfile -ExecutionPolicy Bypass `
+            -File build-installers.ps1 -NativeOnly `
+            -Version "${{ steps.ver.outputs.full }}" -NoIncrement
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Collect native artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\installer\output\collect" -Force | Out-Null
+          Get-ChildItem "C:\temp\installer\output" -Filter "*-native-*" -File |
+            Copy-Item -Destination "$env:RUNNER_TEMP\installer\output\collect"
+
+      - name: Upload native installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarExtract-setup-native
+          path: ${{ runner.temp }}/installer/output/collect
+          if-no-files-found: error
+
   release:
     name: Attach installers to GitHub Release
-    needs: build
+    needs: [build, build-native]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
@@ -117,9 +174,12 @@ jobs:
           merge-multiple: true
 
       - name: Attach to release
+        # delete_assets: re-pointing a tag (or a re-run) must not mix stale
+        # asset versions from an earlier build into the release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             installers/*.exe
             installers/*.zip
           generate_release_notes: true
+          delete_assets: "replace"

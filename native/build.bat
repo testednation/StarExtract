@@ -1,9 +1,40 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "MSVC=C:\buildtools\VC\Tools\MSVC\14.44.35207"
-set "WINSDK=C:\Program Files (x86)\Windows Kits\10"
-set "SDKVER=10.0.22621.0"
+:: ---- MSVC toolchain detection (local + CI) -------------------------------
+:: Only the vcvars batch is needed; the INCLUDE/LIB env it sets drives cl/rc.
+:: Try a flat list of known vcvars64.bat locations and use the first that exists.
+set "VCVARS64="
+set "VCVARS32="
+if defined VCVARS64 goto :got_vcvars
+for %%C in (
+    "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+    "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
+    "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+    "C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+    "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+    "C:\buildtools\VC\Auxiliary\Build\vcvars64.bat"
+) do (
+    if exist %%C if not defined VCVARS64 set "VCVARS64=%%~C"
+)
+:: Last resort: vswhere (ships with every VS 2017+ install, incl. CI runners)
+if not defined VCVARS64 (
+    set "VSWHERE=C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    if exist "%VSWHERE%" (
+        for /f "usebackq delims=" %%V in ('"%VSWHERE%" -latest -products * -find VC\Auxiliary\Build\vcvars64.bat') do (
+            if exist "%%V" if not defined VCVARS64 set "VCVARS64=%%~V"
+        )
+    )
+)
+if defined VCVARS64 (
+    for %%F in ("!VCVARS64!") do set "VCVARS32=%%~dpFvcvars32.bat"
+    if not exist "!VCVARS32!" set "VCVARS32=!VCVARS64!"
+)
+:got_vcvars
+if not defined VCVARS64 (
+    echo [ERROR] MSVC toolchain not found - install the VS Build Tools C++ workload or set VCVARS64.
+    exit /b 1
+)
 
 :: Version: optional %1 = full version (1.6.0.1), else read repo files.
 :: Optional %2 = "nobump" to skip the BUILD_NUMBER increment (release pipeline
@@ -31,20 +62,17 @@ set "VERSION=%BASEVER%.%BUILDNUM%"
 set "ARCH=x64"
 if /I "%~3"=="x86" set "ARCH=x86"
 set "OUTEXE=StarExtractNative.exe"
-set "LIB_MSVC=%MSVC%\lib\x64"
-set "LIB_SDK=%WINSDK%\Lib\%SDKVER%\um\x64"
 if "%ARCH%"=="x86" (
     set "OUTEXE=x86\StarExtractNative.exe"
-    set "LIB_MSVC=%MSVC%\lib\x86"
-    set "LIB_SDK=%WINSDK%\Lib\%SDKVER%\um\x86"
     if not exist x86 mkdir x86
 )
 echo Building Star Extract v%VERSION% (%ARCH%)
+echo Toolchain: !VCVARS64!
 
 if "%ARCH%"=="x86" (
-    call "C:\buildtools\VC\Auxiliary\Build\vcvars32.bat" >nul 2>&1
+    call "!VCVARS32!" >nul 2>&1
 ) else (
-    call "C:\buildtools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+    call "!VCVARS64!" >nul 2>&1
 )
 
 if errorlevel 1 (
@@ -58,11 +86,9 @@ cl.exe /nologo /EHsc /O2 /W4 /DUNICODE /D_UNICODE ^
     /DSE_VERSION_MINOR=%BASEVER:~2,1% ^
     /DSE_VERSION_PATCH=%BASEVER:~4,1% ^
     /DSE_VERSION_BUILD=%BUILDNUM% ^
-    /I"%MSVC%\include" /I"%WINSDK%\Include\%SDKVER%\ucrt" /I"%WINSDK%\Include\%SDKVER%\um" /I"%WINSDK%\Include\%SDKVER%\shared" ^
     /Fe:%OUTEXE% ^
     StarExtractNative.cpp se_ui.cpp se_tools.cpp se_components.cpp ^
     /link /SUBSYSTEM:WINDOWS ^
-    /LIBPATH:"%LIB_MSVC%" /LIBPATH:"%LIB_SDK%" ^
     kernel32.lib user32.lib gdi32.lib comctl32.lib comdlg32.lib shell32.lib ole32.lib uuid.lib msimg32.lib crypt32.lib advapi32.lib shlwapi.lib wininet.lib
 
 if errorlevel 1 (
@@ -112,7 +138,6 @@ if errorlevel 1 (
     echo [3/3] Linking with version resource...
     link.exe /SUBSYSTEM:WINDOWS /OUT:%OUTEXE% ^
         StarExtractNative.obj se_ui.obj se_tools.obj se_components.obj res\version.res ^
-        /LIBPATH:"%LIB_MSVC%" /LIBPATH:"%LIB_SDK%" ^
         kernel32.lib user32.lib gdi32.lib comctl32.lib comdlg32.lib shell32.lib ole32.lib uuid.lib msimg32.lib crypt32.lib advapi32.lib shlwapi.lib wininet.lib
 )
 

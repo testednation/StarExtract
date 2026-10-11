@@ -12,7 +12,8 @@ param(
     [switch]$NoIncrement,
     [switch]$NoPortable,
     [switch]$NoSetupZip,
-    [switch]$NativeOnly
+    [switch]$NativeOnly,
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,7 +37,8 @@ function Get-RepoVersion {
     return "$base.$build"
 }
 
-$version = Get-RepoVersion -Root $rootDir
+# -Version (when passed) wins - lets CI stamp tag + run number exactly, e.g. "1.6.0.3".
+$version = if ([string]::IsNullOrWhiteSpace($Version)) { Get-RepoVersion -Root $rootDir } else { $Version }
 $variant = if ($NativeOnly) { "-native" } else { "" }
 
 $env:PATH = "C:\Program Files\dotnet;C:\temp\dotnet-sdk;C:\Program Files\Inno Setup 7;C:\temp\installer\tools\innoportable\{app};" + $env:PATH
@@ -92,12 +94,11 @@ Write-Host "[OK] Using Inno Setup: $isccExe" -ForegroundColor Gray
 
 # 3. Build Binaries (stamped with the full version incl. build number)
 $nativeDir = Join-Path $rootDir "native"
-$vcvars = "C:\buildtools\VC\Auxiliary\Build\vcvars64.bat"
-
+# build.bat auto-detects the MSVC toolchain (vswhere / known paths), so we no
+# longer gate the native build on a machine-specific vcvars path.
 if ($NativeOnly) {
     # Native-only: build the C++ edition for both arches; no .NET involved.
     Write-Host "`n[1/5] Building native edition x64 + x86 (v$version)..." -ForegroundColor Yellow
-    if (-not (Test-Path $vcvars)) { throw "[ERROR] MSVC toolchain not found: $vcvars" }
     foreach ($a in @("x64", "x86")) {
         Write-Host "Building native $a (Release)..." -ForegroundColor Gray
         Push-Location $nativeDir
@@ -122,20 +123,21 @@ if ($NativeOnly) {
 
     # 3b. Build the native C++ edition with the same version stamp so the exe
     # bundled in the installers/ZIPs matches the artifact version exactly.
-    # The toolchain path is machine-specific (works locally + on this host); on
-    # machines without it we fall back to a pre-built exe or skip it.
-    if (Test-Path $vcvars) {
-        Write-Host "Building native edition (v$version, no bump)..." -ForegroundColor Gray
-        Push-Location $nativeDir
-        try {
-            & cmd.exe /c "build.bat $version nobump"
-            if ($LASTEXITCODE -ne 0) { throw "native build failed with exit code $LASTEXITCODE" }
-        } finally {
-            Pop-Location
-        }
+    # build.bat self-detects the toolchain; if it can't find MSVC it exits
+    # non-zero, which we treat as "bundle a pre-built native exe if present."
+    Write-Host "Building native edition (v$version, no bump)..." -ForegroundColor Gray
+    Push-Location $nativeDir
+    $nativeBuilt = $true
+    try {
+        & cmd.exe /c "build.bat $version nobump"
+        if ($LASTEXITCODE -ne 0) { $nativeBuilt = $false }
+    } finally {
+        Pop-Location
+    }
+    if ($nativeBuilt) {
         Write-Host "Native edition built: $nativeDir\StarExtractNative.exe" -ForegroundColor Gray
     } else {
-        Write-Warning "MSVC toolchain not found ($vcvars) - bundling pre-built native exe if present."
+        Write-Warning "Native build failed - bundling pre-built native exe if present."
     }
 }
 

@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  releases: write
 
 # Shared snippet: Inno Setup installers moved to GitHub releases; download the
 # portable exe, install silently, and put ISCC.exe on PATH.
